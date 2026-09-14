@@ -287,4 +287,12 @@ config DRIVER_VIDEO_FSL_LDB
 	  Say Y here if you want to enable support for the i.MX6SX/8MP/93
 	  DPI-to-LVDS on-SoC encoder.
 
+config DRIVER_VIDEO_N800_BLIZZARD
+   bool "Nokia N800 Blizzard framebuffer"
+   depends on MACH_NOKIA_N800
+   help
+     Enable the OMAP2 RFBI and Epson S1D13745 Blizzard framebuffer used by
+     the Nokia N800.
+
+
 endif

@@ -19,6 +19,13 @@
 menu "OMAP Features"
 	depends on ARCH_OMAP
 
+config ARCH_OMAP2
+	bool
+	select CPU_V6
+	select GENERIC_GPIO
+	help
+	  Say Y here if you are using a Texas Instruments OMAP2 based platform
+
 config ARCH_OMAP3
 	bool
 	select CPU_V7
@@ -146,6 +153,12 @@ config MACH_AFI_GF
 	select ARCH_AM33XX
 	  help
 	  Say Y here if you are using afis GF
+
+config MACH_NOKIA_N800
+	bool "Nokia N800"
+	select ARCH_OMAP2
+	help
+	  Say Y here if you are using a Nokia N800 Internet Tablet
 
 config MACH_BEAGLE
 	bool "Texas Instrument's Beagle Board"

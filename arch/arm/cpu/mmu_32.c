@@ -322,7 +322,15 @@ static uint32_t get_pte_flags(maptype_t map_type)
 		switch (map_type & MAP_TYPE_MASK) {
 		case MAP_CACHED_RO:
 		case MAP_CODE:
-			return PTE_FLAGS_CACHED_RO_V4;
+			/*
+			 * ARMv6 does not use the legacy ARMv4 S/R permission
+			 * interpretation required by PTE_SMALL_AP_UNO_SRO here.
+			 * AP=00 therefore causes permission faults for both code
+			 * and read-only data. Keep these mappings writable during
+			 * ARMv6 bring-up, but cached and executable as applicable,
+			 * using the working supervisor read/write permissions.
+			 */
+			return PTE_FLAGS_CACHED_V4;
 		case MAP_CACHED_RWX:
 		case MAP_CACHED:
 			return PTE_FLAGS_CACHED_V4;

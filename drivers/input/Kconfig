@@ -23,6 +23,17 @@ config INPUT_EVBUG
 
           If unsure, say N.
 
+
+config KEYBOARD_N800_TSC2301
+	bool "Nokia N800 TSC2301 keypad"
+	depends on MACH_NOKIA_N800
+	select POLLER
+	select INPUT
+	help
+	  Enable keypad support for the Nokia N800 TSC2301.
+	  The initial bring-up driver polls the TSC2301 keypad data register
+	  through OMAP2 McSPI1 and reports standard Barebox input events.
+
 config KEYBOARD_GPIO
 	bool "GPIO Buttons"
 	depends on GPIOLIB

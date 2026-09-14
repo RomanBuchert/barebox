@@ -18,6 +18,7 @@ obj-$(CONFIG_MCI_IMX)		+= imx.o
 obj-$(CONFIG_MCI_IMX_ESDHC)	+= imx-esdhc.o imx-esdhc-common.o
 pbl-$(CONFIG_MCI_IMX_ESDHC_PBL)	+= imx-esdhc-pbl.o imx-esdhc-common.o
 obj-$(CONFIG_MCI_MXS)		+= mxs.o
+obj-$(CONFIG_MCI_OMAP2420)	+= omap2420_mmc.o
 obj-$(CONFIG_MCI_OMAP_HSMMC)	+= omap_hsmmc.o omap_hsmmc_common.o
 pbl-$(CONFIG_MCI_OMAP_HSMMC_PBL)	+= omap_hsmmc_pbl.o omap_hsmmc_common.o
 obj-$(CONFIG_MCI_PXA)		+= pxamci.o

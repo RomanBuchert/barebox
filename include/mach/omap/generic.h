@@ -16,9 +16,22 @@
 
 extern unsigned int __omap_cpu_type;
 
+#define OMAP_CPU_OMAP2		2
 #define OMAP_CPU_OMAP3		3
 #define OMAP_CPU_OMAP4		4
 #define OMAP_CPU_AM33XX		33
+
+#ifdef CONFIG_ARCH_OMAP2
+# ifdef omap_cpu_type
+#  undef omap_cpu_type
+#  define omap_cpu_type __omap_cpu_type
+# else
+#  define omap_cpu_type OMAP_CPU_OMAP2
+# endif
+# define cpu_is_omap2()		(omap_cpu_type == OMAP_CPU_OMAP2)
+#else
+# define cpu_is_omap2()		(0)
+#endif
 
 #ifdef CONFIG_ARCH_OMAP3
 # ifdef omap_cpu_type

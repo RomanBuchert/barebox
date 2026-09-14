@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+#include <arm/ti/omap/omap2420-n800.dts>
+
+/ {
+	n8x0s_tsc2301_keypad {
+		compatible = "n8x0s,n800-tsc2301-keypad";
+	};
+};
+
+&msdi1 {
+	bus-width = <4>;
+	status = "okay";
+};

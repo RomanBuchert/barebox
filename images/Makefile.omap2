@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+pblb-$(CONFIG_MACH_NOKIA_N800) += start_nokia_n800
+MAX_PBL_IMAGE_SIZE_start_nokia_n800 := 2097152
+
+FILE_barebox-nokia-n800.img = start_nokia_n800.pblb
+image-$(CONFIG_MACH_NOKIA_N800) += barebox-nokia-n800.img

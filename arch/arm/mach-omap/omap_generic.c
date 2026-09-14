@@ -194,6 +194,8 @@ late_initcall(omap_env_init);
 
 static int omap_soc_from_dt(void)
 {
+        if (of_machine_is_compatible("ti,omap2"))
+		return OMAP_CPU_OMAP2;
         if (of_machine_is_compatible("ti,am33xx"))
 		return OMAP_CPU_AM33XX;
         if (of_machine_is_compatible("ti,omap4"))
@@ -216,7 +218,9 @@ static int omap_init(void)
 			return 0;
 	}
 
-	if (cpu_is_omap3())
+	if (cpu_is_omap2())
+		ret = 0;
+	else if (cpu_is_omap3())
 		ret = omap3_init();
 	else if (cpu_is_omap4())
 		ret = omap4_init();

@@ -41,3 +41,5 @@ obj-$(CONFIG_DRIVER_VIDEO_DW_MIPI_DSI) += dw_mipi_dsi.o
 obj-$(CONFIG_DRIVER_VIDEO_BOCHS) += bochs/
 obj-$(CONFIG_DRIVER_VIDEO_ROCKCHIP) += rockchip/
 obj-$(CONFIG_DRIVER_VIDEO_FSL_LDB) += fsl-ldb.o
+
+obj-$(CONFIG_DRIVER_VIDEO_N800_BLIZZARD) += omap2-rfbi.o n800-blizzard.o

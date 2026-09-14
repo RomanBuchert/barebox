@@ -172,6 +172,7 @@ objboard = $(objtree)/arch/$(SRCARCH)/boards
 
 include $(srctree)/images/Makefile.am33xx
 include $(srctree)/images/Makefile.am35xx
+include $(srctree)/images/Makefile.omap2
 include $(srctree)/images/Makefile.ar231x
 include $(srctree)/images/Makefile.ath79
 include $(srctree)/images/Makefile.bcm283x
