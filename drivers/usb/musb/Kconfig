@@ -17,6 +17,15 @@ config USB_MUSB_AM335X
 	  This driver provides the necessary bit to enable USB support
 	  on the TI AM335x SoC.
 
+config USB_MUSB_TUSB6010
+	bool "TUSB6010 MUSB support"
+	depends on ARCH_OMAP2
+	select USB_MUSB_GADGET
+	help
+	  Enable the TUSB6010 glue needed by the Nokia N800. The initial
+	  implementation is peripheral-only and uses PIO through the
+	  asynchronous GPMC chip select.
+
 config USB_MUSB_HOST
 	bool "MUSB Host mode support"
 	depends on USB_HOST

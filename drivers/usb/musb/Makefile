@@ -10,3 +10,5 @@ obj-$(CONFIG_USB_MUSB_GADGET) += musb_gadget.o musb_gadget_ep0.o
 
 obj-$(CONFIG_USB_MUSB_DSPS)	+= musb_dsps.o
 obj-$(CONFIG_USB_MUSB_AM335X)	+= phy-am335x-control.o musb_am335x.o phy-am335x.o
+
+obj-$(CONFIG_USB_MUSB_TUSB6010) += musb_tusb6010_n800.o
