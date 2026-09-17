@@ -5,6 +5,13 @@
 
 menu "I2C Hardware Bus support"
 
+config I2C_CBUS_GPIO
+	bool "CBUS I2C driver"
+	depends on OFDEVICE
+	help
+	  Support the three-wire CBUS used by Nokia Internet Tablets.
+
+
 config I2C_GPIO
 	tristate "GPIO-based bitbanging I2C"
 	depends on GENERIC_GPIO

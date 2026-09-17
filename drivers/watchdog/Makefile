@@ -26,3 +26,4 @@ obj-$(CONFIG_WDAT_WDT) += wdat_wdt.o
 obj-$(CONFIG_CADENCE_WATCHDOG) += cadence_wdt.o
 obj-$(CONFIG_K3_RTI_WDT) += rti_wdt.o
 obj-$(CONFIG_HGS_EFI_WATCHDOG) += hgs_efi_wdt.o
+obj-$(CONFIG_RETU_WATCHDOG) += retu_wdt.o

@@ -29,6 +29,10 @@ struct omap_gpio_drvdata {
 	unsigned int regofs;
 };
 
+static struct omap_gpio_drvdata gpio_omap2_drvdata = {
+	.regofs = 0x0,
+};
+
 static struct omap_gpio_drvdata gpio_omap3_drvdata = {
 	.regofs = 0x0,
 };
@@ -158,6 +162,9 @@ static __maybe_unused struct of_device_id omap_gpio_dt_ids[] = {
 	}, {
 		.compatible = "ti,omap3-gpio",
 		.data = &gpio_omap3_drvdata,
+	}, {
+		.compatible = "ti,omap2-gpio",
+		.data = &gpio_omap2_drvdata,
 	}, {
 	}
 };

@@ -11,6 +11,16 @@ menuconfig WATCHDOG
 
 if WATCHDOG
 
+config RETU_WATCHDOG
+	bool "Nokia Retu watchdog"
+	depends on MFD_RETU
+	select WATCHDOG_POLLER
+	help
+	  Support the watchdog in the Nokia Retu multifunction device. The
+	  hardware watchdog cannot be disabled, so the Barebox watchdog poller
+	  is enabled to keep it serviced while Barebox is running.
+
+
 config WATCHDOG_POLLER
 	bool "Watchdog periodic feeder support"
 	select POLLER
