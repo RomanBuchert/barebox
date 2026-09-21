@@ -291,8 +291,9 @@ config DRIVER_VIDEO_N800_BLIZZARD
    bool "Nokia N800 Blizzard framebuffer"
    depends on MACH_NOKIA_N800
    help
-     Enable the OMAP2 RFBI and Epson S1D13745 Blizzard framebuffer used by
-     the Nokia N800.
+     Enable the OMAP2420 RFBI and Epson S1D13745 Blizzard framebuffer used
+     by the Nokia N800. The controller protocol is kept in a transport-neutral
+     core so it can also be reused by a Linux kernel driver.
 
 
 endif

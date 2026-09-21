@@ -1,13 +1,25 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #pragma once
 
+#include <dma.h>
 #include <linux/types.h>
 
-#define OMAP2_RFBI_CS0 0
+struct omap2_rfbi_clocks {
+   unsigned long osc_hz;
+   unsigned long l4_hz;
+};
 
-void omap2_rfbi_init(void);
-void omap2_rfbi_select(unsigned int chip_select);
-void omap2_rfbi_write_command(u16 value);
-void omap2_rfbi_write_parameter(u16 value);
-void omap2_rfbi_transfer(dma_addr_t framebuffer, unsigned int width,
-                         unsigned int height);
+int omap2_rfbi_init(struct omap2_rfbi_clocks *clocks);
+int omap2_rfbi_set_timings(unsigned long device_sys_hz,
+                           const struct omap2_rfbi_clocks *clocks,
+                           unsigned long *write_cycle_ps);
+void omap2_rfbi_set_bits_per_cycle(unsigned int bits);
+u8 omap2_rfbi_read_reg8(u8 reg);
+void omap2_rfbi_write_command8(u8 command);
+void omap2_rfbi_write_data8(u8 value);
+int omap2_rfbi_setup_tearsync(unsigned int pin_count, unsigned int hs_pulse_ps,
+                              unsigned int vs_pulse_ps, bool hs_pol_inv,
+                              bool vs_pol_inv);
+unsigned long omap2_rfbi_get_max_tx_rate(void);
+int omap2_rfbi_enable_tearsync(bool enable, unsigned int line);
+int omap2_rfbi_transfer(unsigned int width, unsigned int height);

@@ -1,142 +1,308 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include <common.h>
+#include <clock.h>
 #include <dma.h>
 #include <fb.h>
 #include <init.h>
+#include <linux/io.h>
 #include <linux/string.h>
+#include <poller.h>
+#include <i2c/i2c-cbus-gpio.h>
 
+#include "n800-blizzard-core.h"
+#include "omap2-dispc.h"
 #include "omap2-rfbi.h"
 
-#define N800_LCD_WIDTH  800
-#define N800_LCD_HEIGHT 480
-#define N800_LCD_BPP    16
+#define OMAP2420_PRCM_BASE          0x48008000U
+#define PRCM_CLKSRC_CTRL            0x0060U
+#define PRCM_OSC_DISABLE_MASK       (0x3U << 3)
 
-#define RGB565_RED   0xf800
-#define RGB565_GREEN 0x07e0
-#define RGB565_BLUE  0x001f
+#define TAHVO_CBUS_ID               0x02U
+#define TAHVO_REG_VCORE             0x07U
+#define TAHVO_VCORE_MASK            0x000fU
 
 struct n800_blizzard {
    struct fb_info info;
    struct fb_videomode mode;
+   struct omap2_rfbi_clocks clocks;
+   struct n800_blizzard_bus bus;
+   struct n800_blizzard_info controller;
    dma_addr_t framebuffer_phys;
+   bool transfer_error_reported;
+   bool transfer_busy;
+   bool transfer_disabled;
+   unsigned long write_cycle_ps;
 };
 
 static struct n800_blizzard n800_display;
 
-static void blizzard_write_reg(u8 reg, u8 value)
+static int n800_blizzard_power_up(void)
 {
-   omap2_rfbi_write_command(reg);
-   omap2_rfbi_write_parameter(value);
+   u32 value;
+   int tahvo;
+   int ret;
+
+   /* Exact RX-34 blizzard_power_up() sequence used by displaydiag V1.14. */
+   tahvo = cbus_gpio_read_reg(TAHVO_CBUS_ID, TAHVO_REG_VCORE);
+   if (tahvo < 0)
+      return tahvo;
+
+   ret = cbus_gpio_write_reg(TAHVO_CBUS_ID, TAHVO_REG_VCORE,
+                             tahvo & ~TAHVO_VCORE_MASK);
+   if (ret)
+      return ret;
+   mdelay(10);
+
+   value = readl(IOMEM(OMAP2420_PRCM_BASE + PRCM_CLKSRC_CTRL));
+   writel(value & ~PRCM_OSC_DISABLE_MASK,
+          IOMEM(OMAP2420_PRCM_BASE + PRCM_CLKSRC_CTRL));
+
+   /*
+    * Do not remux or rewrite GPIO15 here.  V1.14 deliberately preserved the
+    * NOLO-provided POWERDOWN pin state and that exact path is verified on the
+    * real N800.  A future cold-init/NOLO-replacement path belongs separately.
+    */
+   return 0;
 }
 
-static void blizzard_setup_window(void)
+static void bus_set_bits(void *context, unsigned int bits)
 {
-   /* LCD geometry. Width is stored in units of eight pixels. */
-   blizzard_write_reg(0x2a, 0x64);
-   blizzard_write_reg(0x2c, 0x1e);
-   blizzard_write_reg(0x2e, 0xe0);
-   blizzard_write_reg(0x30, 0x01);
-   blizzard_write_reg(0x32, 0x06);
-
-   /* Enable display output. */
-   blizzard_write_reg(0x68, 0x01);
-
-   /* Input and output windows: x=0..799, y=0..479. */
-   omap2_rfbi_write_command(0x6c);
-
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x1f);
-   omap2_rfbi_write_parameter(0x03);
-   omap2_rfbi_write_parameter(0xdf);
-   omap2_rfbi_write_parameter(0x01);
-
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x00);
-   omap2_rfbi_write_parameter(0x1f);
-   omap2_rfbi_write_parameter(0x03);
-   omap2_rfbi_write_parameter(0xdf);
-   omap2_rfbi_write_parameter(0x01);
-
-   /* RGB565 input and display-memory data source. */
-   omap2_rfbi_write_parameter(0x01);
-   omap2_rfbi_write_parameter(0x01);
+   omap2_rfbi_set_bits_per_cycle(bits);
 }
 
-static void n800_blizzard_transfer(struct n800_blizzard *display)
+static u8 bus_read_reg(void *context, u8 reg)
+{
+   return omap2_rfbi_read_reg8(reg);
+}
+
+static void bus_write_command(void *context, u8 command)
+{
+   omap2_rfbi_write_command8(command);
+}
+
+static void bus_write_data8(void *context, u8 value)
+{
+   omap2_rfbi_write_data8(value);
+}
+
+static int bus_setup_tearsync(void *context, unsigned int pin_count,
+                              unsigned int hs_pulse_ps, unsigned int vs_pulse_ps,
+                              bool hs_pol_inv, bool vs_pol_inv)
+{
+   return omap2_rfbi_setup_tearsync(pin_count, hs_pulse_ps, vs_pulse_ps,
+                                    hs_pol_inv, vs_pol_inv);
+}
+
+static unsigned long bus_get_max_tx_rate(void *context)
+{
+   return omap2_rfbi_get_max_tx_rate();
+}
+
+static int n800_blizzard_prepare(struct n800_blizzard *display)
+{
+   int ret;
+
+   pr_info("n800-display: hardware initialization begin\n");
+
+   ret = omap2_rfbi_init(&display->clocks);
+   if (ret)
+      return ret;
+   pr_info("n800-display: RFBI initialized\n");
+
+   ret = n800_blizzard_power_up();
+   if (ret)
+      return ret;
+   pr_info("n800-display: display power enabled\n");
+
+   ret = omap2_rfbi_set_timings(display->clocks.osc_hz, &display->clocks, NULL);
+   if (ret)
+      return ret;
+
+   ret = n800_blizzard_probe(&display->bus, display->clocks.osc_hz,
+                             &display->controller);
+   if (ret)
+      return ret;
+   pr_info("n800-display: Blizzard controller detected, revision 0x%02x\n",
+           display->controller.revision);
+
+   ret = omap2_rfbi_set_timings(display->controller.sys_hz, &display->clocks,
+                                &display->write_cycle_ps);
+   if (ret)
+      return ret;
+
+   /* N800 board-n800.c sets te_connected = 1.  RX-34 blizzard_setup_clocks()
+    * therefore always executes setup_tearsync() after the final RFBI timings.
+    */
+   ret = n800_blizzard_setup_tearsync(&display->bus, &display->controller,
+                                      display->write_cycle_ps);
+   if (ret)
+      return ret;
+   pr_info("n800-display: tear sync configured\n");
+
+   pr_info("n800-blizzard: S1D1374%c rev=0x%02x sys=%lu Hz pixel=%lu Hz\n",
+           (display->controller.revision & 0xfcU) == 0xa4U ? '5' : '4',
+           display->controller.revision, display->controller.sys_hz,
+           display->controller.pixel_hz);
+   return 0;
+}
+
+static void n800_blizzard_report_transfer_error(struct n800_blizzard *display, int ret)
+{
+   if (display->transfer_error_reported)
+      return;
+
+   display->transfer_error_reported = true;
+   pr_err("n800-blizzard: DISPC/RFBI transfer failed: %pe\n", ERR_PTR(ret));
+}
+
+static void n800_blizzard_sync_shadow_rect(struct fb_info *info, unsigned int x,
+                                             unsigned int y, unsigned int width,
+                                             unsigned int height)
+{
+   unsigned int row;
+   size_t offset;
+   size_t bytes = width * sizeof(u16);
+
+   if (!info->screen_base_shadow)
+      return;
+
+   for (row = 0; row < height; row++) {
+      offset = (y + row) * info->line_length + x * sizeof(u16);
+      memcpy((u8 *)info->screen_base + offset,
+             (u8 *)info->screen_base_shadow + offset, bytes);
+   }
+}
+
+static void n800_blizzard_transfer_rect(struct n800_blizzard *display,
+                                        unsigned int x, unsigned int y,
+                                        unsigned int width, unsigned int height)
 {
    struct fb_info *info = &display->info;
+   int ret;
 
-   if (info->screen_base_shadow)
-      memcpy(info->screen_base, info->screen_base_shadow, info->screen_size);
+   if (!width || !height || display->transfer_busy || display->transfer_disabled)
+      return;
 
-   omap2_rfbi_transfer(display->framebuffer_phys, info->xres, info->yres);
+   display->transfer_busy = true;
+
+   n800_blizzard_sync_shadow_rect(info, x, y, width, height);
+
+   /*
+    * Single-plane RGB565 equivalent of Nokia blizzard.c do_partial_update():
+    * setup the overlapping GFX source area, enable the plane, program the
+    * Blizzard input/output window, select 16-bit cycles, transfer_area().
+    */
+   omap2_dispc_setup_plane(display->framebuffer_phys, info->xres,
+                           x, y, width, height);
+   omap2_dispc_enable_plane(true);
+
+   /*
+    * Nokia RX-34 do_partial_update() ordering.  Do not program a new
+    * Blizzard window until the previous line-buffer operation is complete.
+    */
+   n800_blizzard_wait_line_buffer(&display->bus);
+
+   /* No OMAPFB_FORMAT_FLAG_TEARSYNC: exact RX-34 else branch. */
+   omap2_rfbi_enable_tearsync(false, 0);
+   n800_blizzard_disable_tearsync(&display->bus);
+
+   n800_blizzard_set_window(&display->bus, &display->controller,
+                             x, y, width, height);
+   display->bus.set_bits_per_cycle(display->bus.context, 16);
+
+   ret = omap2_rfbi_transfer(width, height);
+   if (ret) {
+      /* Stop repeated console damage from turning one failed transfer into a
+       * permanent boot stall.  The Nokia hardware path remains untouched.
+       */
+      display->transfer_disabled = true;
+      n800_blizzard_report_transfer_error(display, ret);
+   }
+
+   display->transfer_busy = false;
 }
 
 static void n800_blizzard_enable(struct fb_info *info)
 {
-   struct n800_blizzard *display = info->priv;
+   pr_info("n800-display: initial framebuffer transfer begin\n");
+   n800_blizzard_transfer_rect(info->priv, 0, 0, info->xres, info->yres);
+   pr_info("n800-display: initial framebuffer transfer complete\n");
+}
 
-   omap2_rfbi_init();
-   omap2_rfbi_select(OMAP2_RFBI_CS0);
-   blizzard_setup_window();
-   n800_blizzard_transfer(display);
+static void n800_blizzard_damage(struct fb_info *info, const struct fb_rect *rect)
+{
+   struct n800_blizzard *display = info->priv;
+   unsigned int width = fb_rect_width(rect);
+   unsigned int height = fb_rect_height(rect);
+
+   if (rect->x1 >= info->xres || rect->y1 >= info->yres)
+      return;
+
+   width = min(width, info->xres - rect->x1);
+   height = min(height, info->yres - rect->y1);
+   n800_blizzard_transfer_rect(display, rect->x1, rect->y1, width, height);
 }
 
 static void n800_blizzard_flush(struct fb_info *info)
 {
-   struct n800_blizzard *display = info->priv;
-
-   n800_blizzard_transfer(display);
+   n800_blizzard_transfer_rect(info->priv, 0, 0, info->xres, info->yres);
 }
 
 static struct fb_ops n800_blizzard_ops = {
    .fb_enable = n800_blizzard_enable,
+   .fb_damage = n800_blizzard_damage,
    .fb_flush = n800_blizzard_flush,
 };
-
-static void n800_fill_rgb_test_pattern(struct fb_info *info)
-{
-   u16 *fb = info->screen_base;
-   unsigned int x;
-   unsigned int y;
-
-   for (y = 0; y < info->yres; y++) {
-      for (x = 0; x < info->xres; x++) {
-         if (x < 267)
-            fb[y * info->xres + x] = RGB565_RED;
-         else if (x < 533)
-            fb[y * info->xres + x] = RGB565_GREEN;
-         else
-            fb[y * info->xres + x] = RGB565_BLUE;
-      }
-   }
-}
 
 static int n800_blizzard_init(void)
 {
    struct n800_blizzard *display = &n800_display;
    struct fb_info *info = &display->info;
+   uint64_t start;
    size_t size;
    int ret;
 
+   /*
+    * The TUSB6010/CDC gadget is registered at device_initcall level.  Give
+    * the host a short diagnostic window to enumerate and open CDC before the
+    * display touches any hardware.  poller_call() keeps USB and the Retu
+    * watchdog alive during this temporary bring-up delay.
+    */
+   start = get_time_ns();
+   while (!is_timeout(start, 2ULL * SECOND)) {
+      poller_call();
+      udelay(1000);
+   }
+
+   pr_info("n800-display: delayed initialization after USB CDC initcalls\n");
+
    memset(display, 0, sizeof(*display));
 
+   display->bus.context = display;
+   display->bus.set_bits_per_cycle = bus_set_bits;
+   display->bus.read_reg = bus_read_reg;
+   display->bus.write_command = bus_write_command;
+   display->bus.write_data8 = bus_write_data8;
+   display->bus.setup_tearsync = bus_setup_tearsync;
+   display->bus.get_max_tx_rate = bus_get_max_tx_rate;
+
+   ret = n800_blizzard_prepare(display);
+   if (ret) {
+      pr_err("n800-blizzard: hardware initialization failed: %pe\n", ERR_PTR(ret));
+      return ret;
+   }
+
    display->mode.name = "800x480";
-   display->mode.xres = N800_LCD_WIDTH;
-   display->mode.yres = N800_LCD_HEIGHT;
+   display->mode.xres = N800_BLIZZARD_WIDTH;
+   display->mode.yres = N800_BLIZZARD_HEIGHT;
 
    info->mode = &display->mode;
-   info->xres = N800_LCD_WIDTH;
-   info->yres = N800_LCD_HEIGHT;
-   info->bits_per_pixel = N800_LCD_BPP;
-   info->line_length = N800_LCD_WIDTH * sizeof(u16);
-   info->screen_size = info->line_length * N800_LCD_HEIGHT;
+   info->xres = N800_BLIZZARD_WIDTH;
+   info->yres = N800_BLIZZARD_HEIGHT;
+   info->bits_per_pixel = 16;
+   info->line_length = N800_BLIZZARD_WIDTH * sizeof(u16);
+   info->screen_size = info->line_length * N800_BLIZZARD_HEIGHT;
    info->red.offset = 11;
    info->red.length = 5;
    info->green.offset = 5;
@@ -151,17 +317,29 @@ static int n800_blizzard_init(void)
                                            &display->framebuffer_phys);
    if (!info->screen_base)
       return -ENOMEM;
+   memset(info->screen_base, 0, size);
+   pr_info("n800-display: framebuffer memory allocated\n");
 
-   n800_fill_rgb_test_pattern(info);
-
+   pr_info("n800-display: registering framebuffer\n");
    ret = register_framebuffer(info);
    if (ret)
       return ret;
+   pr_info("n800-display: framebuffer registered\n");
 
-   /*
-    * Enable immediately so the framebuffer itself is the first visible
-    * Barebox output. Later the shell/menu can use the registered fb0.
-    */
-   return fb_enable(info);
+   pr_info("n800-display: enabling framebuffer\n");
+   ret = fb_enable(info);
+   if (ret)
+      return ret;
+
+   pr_info("n800-display: framebuffer enabled\n");
+   return 0;
 }
-device_initcall(n800_blizzard_init);
+
+/*
+ * Keep display bring-up after the N800 TUSB6010 device_initcall while the
+ * hardware path is still under investigation.  This gives the CDC ACM
+ * console a chance to come up before RFBI/DISPC/Blizzard initialization.
+ * Move this back to the normal device level once the real-hardware path is
+ * stable.
+ */
+postenvironment_initcall(n800_blizzard_init);
