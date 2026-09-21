@@ -10,9 +10,13 @@
 #include <gpio.h>
 #include <i2c/i2c.h>
 #include <of_gpio.h>
+#include <i2c/i2c-cbus-gpio.h>
 
 #define CBUS_ADDR_BITS 3
 #define CBUS_REG_BITS  5
+
+struct cbus_host;
+static struct cbus_host *cbus_default_host;
 
 struct cbus_host {
    struct i2c_adapter adapter;
@@ -99,6 +103,27 @@ out_end:
    return ret;
 }
 
+int cbus_gpio_read_reg(unsigned int dev, unsigned int reg)
+{
+   if (!cbus_default_host)
+      return -ENODEV;
+
+   return cbus_transfer(cbus_default_host, true, dev, reg, 0);
+}
+EXPORT_SYMBOL(cbus_gpio_read_reg);
+
+int cbus_gpio_write_reg(unsigned int dev, unsigned int reg, unsigned int value)
+{
+   int ret;
+
+   if (!cbus_default_host)
+      return -ENODEV;
+
+   ret = cbus_transfer(cbus_default_host, false, dev, reg, value);
+   return ret < 0 ? ret : 0;
+}
+EXPORT_SYMBOL(cbus_gpio_write_reg);
+
 static int cbus_master_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
 {
    struct cbus_host *host = container_of(adapter, struct cbus_host, adapter);
@@ -173,10 +198,12 @@ static int cbus_probe(struct device *dev)
    dev->priv = host;
 
    ret = i2c_add_numbered_adapter(&host->adapter);
-   if (ret)
+   if (ret) {
       dev_err(dev, "failed to register adapter: %pe\n", ERR_PTR(ret));
-   else
+   } else {
+      cbus_default_host = host;
       dev_info(dev, "adapter registered\n");
+   }
 
    return ret;
 }
