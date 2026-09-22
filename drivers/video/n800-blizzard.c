@@ -244,15 +244,9 @@ static void n800_blizzard_damage(struct fb_info *info, const struct fb_rect *rec
    n800_blizzard_transfer_rect(display, rect->x1, rect->y1, width, height);
 }
 
-static void n800_blizzard_flush(struct fb_info *info)
-{
-   n800_blizzard_transfer_rect(info->priv, 0, 0, info->xres, info->yres);
-}
-
 static struct fb_ops n800_blizzard_ops = {
    .fb_enable = n800_blizzard_enable,
    .fb_damage = n800_blizzard_damage,
-   .fb_flush = n800_blizzard_flush,
 };
 
 static int n800_blizzard_init(void)

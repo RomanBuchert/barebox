@@ -12,6 +12,8 @@
 #include <linux/font.h>
 #include <linux/ctype.h>
 #include <charset.h>
+#include <clock.h>
+#include <poller.h>
 
 enum state_t {
 	LIT,				/* Literal input */
@@ -25,6 +27,8 @@ enum fbconsole_rotation {
 	FBCONSOLE_ROTATE_180,
 	FBCONSOLE_ROTATE_270,
 };
+
+#define FBCONSOLE_UPDATE_INTERVAL_NS (50ULL * MSECOND)
 
 static const char * const rotation_names[] = {
 	[FBCONSOLE_ROTATE_0] = "0",
@@ -96,7 +100,90 @@ struct fbc_priv {
 	int in_console;
 
 	char utf8_buf[5];	/* UTF-8 stream decoder buffer */
+
+	struct poller_async update_poller;
+	struct fb_rect pending_damage;
+	bool pending_damage_valid;
 };
+
+static void fbc_copy_damage_to_framebuffer(struct fbc_priv *priv,
+                                           const struct fb_rect *rect)
+{
+	struct fb_info *fb = priv->fb;
+	unsigned int bpp = fb->bits_per_pixel >> 3;
+	unsigned int width = fb_rect_width(rect);
+	unsigned int y;
+	void *dst;
+	void *src;
+
+	if (!fb->screen_base_shadow || !bpp)
+		return;
+
+	dst = fb->screen_base + rect->y1 * fb->line_length + rect->x1 * bpp;
+	src = fb->screen_base_shadow + rect->y1 * fb->line_length + rect->x1 * bpp;
+
+	for (y = rect->y1; y < rect->y2; y++) {
+		memcpy(dst, src, width * bpp);
+		dst += fb->line_length;
+		src += fb->line_length;
+	}
+}
+
+static void fbc_flush_pending(void *ctx)
+{
+	struct fbc_priv *priv = ctx;
+	struct fb_rect rect;
+
+	if (!priv->pending_damage_valid)
+		return;
+
+	rect = priv->pending_damage;
+	priv->pending_damage_valid = false;
+
+	fbc_copy_damage_to_framebuffer(priv, &rect);
+	fb_damage(priv->fb, &rect);
+}
+
+static void fbc_schedule_update(struct fbc_priv *priv)
+{
+	if (!priv->pending_damage_valid)
+		return;
+
+	if (!poller_async_active(&priv->update_poller))
+		poller_call_async(&priv->update_poller, FBCONSOLE_UPDATE_INTERVAL_NS,
+				  fbc_flush_pending, priv);
+}
+
+static void fbc_queue_blit_area(struct fbc_priv *priv, int startx, int starty,
+				int width, int height)
+{
+	struct fb_rect rect = {
+		.x1 = startx,
+		.y1 = starty,
+		.x2 = startx + width,
+		.y2 = starty + height,
+	};
+
+	if (!width || !height)
+		return;
+
+	if (!priv->pending_damage_valid) {
+		priv->pending_damage = rect;
+		priv->pending_damage_valid = true;
+	} else {
+		priv->pending_damage.x1 = min(priv->pending_damage.x1, rect.x1);
+		priv->pending_damage.y1 = min(priv->pending_damage.y1, rect.y1);
+		priv->pending_damage.x2 = max(priv->pending_damage.x2, rect.x2);
+		priv->pending_damage.y2 = max(priv->pending_damage.y2, rect.y2);
+	}
+
+	fbc_schedule_update(priv);
+}
+
+static void fbc_queue_full_blit(struct fbc_priv *priv)
+{
+	fbc_queue_blit_area(priv, 0, 0, priv->fb->xres, priv->fb->yres);
+}
 
 static int fbc_getc(struct console_device *cdev)
 {
@@ -138,7 +225,7 @@ static void cls(struct fbc_priv *priv)
 			adr += priv->fb->line_length;
 		}
 	}
-	gu_screen_blit_area(priv->sc, priv->margin.left, priv->margin.top,
+	fbc_queue_blit_area(priv, priv->margin.left, priv->margin.top,
 			    width, height);
 }
 
@@ -205,7 +292,7 @@ static void fb_blit_area(struct fbc_priv *priv, int x, int y)
 		return;
 	}
 
-	gu_screen_blit_area(priv->sc, startx, starty, width, height);
+	fbc_queue_blit_area(priv, startx, starty, width, height);
 }
 
 static void drawchar(struct fbc_priv *priv, int x, int y, int c)
@@ -463,7 +550,7 @@ static void fb_scroll_up(struct fbc_priv *priv)
 		break;
 	}
 
-	gu_screen_blit_area(priv->sc, priv->margin.left, priv->margin.top,
+	fbc_queue_blit_area(priv, priv->margin.left, priv->margin.top,
 			    width, height);
 }
 
@@ -690,7 +777,7 @@ static bool fbc_parse_csi(struct fbc_priv *priv)
 
 				if (sz == priv->altscreen_size) {
 					memcpy(dst, priv->altscreen_buf, sz);
-					gu_screen_blit(priv->sc);
+					fbc_queue_full_blit(priv);
 				} else {
 					cls(priv);
 				}
@@ -786,7 +873,6 @@ static void fbc_putc(struct console_device *cdev, char c)
 {
 	struct fbc_priv *priv = container_of(cdev,
 					struct fbc_priv, cdev);
-	struct fb_info *fb = priv->fb;
 	bool queue_flush = false;
 
 	if (priv->in_console)
@@ -880,7 +966,7 @@ static void fbc_putc(struct console_device *cdev, char c)
 	priv->in_console = 0;
 
 	if (queue_flush)
-		fb_flush(fb);
+		fbc_schedule_update(priv);
 }
 
 static int setup_font(struct fbc_priv *priv)
@@ -965,6 +1051,8 @@ static int fbc_close(struct console_device *cdev)
 	}
 
 	if (priv->active) {
+		poller_async_cancel(&priv->update_poller);
+		fbc_flush_pending(priv);
 		fb_close(priv->sc);
 		priv->active = false;
 
@@ -1068,9 +1156,16 @@ int register_fbconsole(struct fb_info *fb)
 	cdev->open = fbc_open;
 	cdev->close = fbc_close;
 
+	ret = poller_async_register(&priv->update_poller, cdev->devname);
+	if (ret) {
+		kfree(priv);
+		return ret;
+	}
+
 	ret = console_register(cdev);
 	if (ret) {
 		pr_err("registering failed with %pe\n", ERR_PTR(ret));
+		poller_async_unregister(&priv->update_poller);
 		kfree(priv);
 		return ret;
 	}
