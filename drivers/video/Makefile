@@ -43,3 +43,4 @@ obj-$(CONFIG_DRIVER_VIDEO_ROCKCHIP) += rockchip/
 obj-$(CONFIG_DRIVER_VIDEO_FSL_LDB) += fsl-ldb.o
 
 obj-$(CONFIG_DRIVER_VIDEO_N800_BLIZZARD) += omap2-dispc.o omap2-rfbi.o n800-blizzard-core.o n800-blizzard.o
+obj-$(CONFIG_DRIVER_VIDEO_N800_BLIZZARD) += n800-display-power.o

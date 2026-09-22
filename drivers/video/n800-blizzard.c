@@ -8,24 +8,15 @@
 #include <linux/io.h>
 #include <linux/string.h>
 #include <poller.h>
-#include <i2c/i2c-cbus-gpio.h>
 
 #include "n800-blizzard-core.h"
+#include "n800-display-power.h"
 #include "omap2-dispc.h"
 #include "omap2-rfbi.h"
-
-#define OMAP2420_PRCM_BASE          0x48008000U
-#define PRCM_CLKSRC_CTRL            0x0060U
-#define PRCM_OSC_DISABLE_MASK       (0x3U << 3)
-
-#define TAHVO_CBUS_ID               0x02U
-#define TAHVO_REG_VCORE             0x07U
-#define TAHVO_VCORE_MASK            0x000fU
 
 struct n800_blizzard {
    struct fb_info info;
    struct fb_videomode mode;
-   struct omap2_rfbi_clocks clocks;
    struct n800_blizzard_bus bus;
    struct n800_blizzard_info controller;
    dma_addr_t framebuffer_phys;
@@ -36,35 +27,6 @@ struct n800_blizzard {
 };
 
 static struct n800_blizzard n800_display;
-
-static int n800_blizzard_power_up(void)
-{
-   u32 value;
-   int tahvo;
-   int ret;
-
-   /* Exact RX-34 blizzard_power_up() sequence used by displaydiag V1.14. */
-   tahvo = cbus_gpio_read_reg(TAHVO_CBUS_ID, TAHVO_REG_VCORE);
-   if (tahvo < 0)
-      return tahvo;
-
-   ret = cbus_gpio_write_reg(TAHVO_CBUS_ID, TAHVO_REG_VCORE,
-                             tahvo & ~TAHVO_VCORE_MASK);
-   if (ret)
-      return ret;
-   mdelay(10);
-
-   value = readl(IOMEM(OMAP2420_PRCM_BASE + PRCM_CLKSRC_CTRL));
-   writel(value & ~PRCM_OSC_DISABLE_MASK,
-          IOMEM(OMAP2420_PRCM_BASE + PRCM_CLKSRC_CTRL));
-
-   /*
-    * Do not remux or rewrite GPIO15 here.  V1.14 deliberately preserved the
-    * NOLO-provided POWERDOWN pin state and that exact path is verified on the
-    * real N800.  A future cold-init/NOLO-replacement path belongs separately.
-    */
-   return 0;
-}
 
 static void bus_set_bits(void *context, unsigned int bits)
 {
@@ -105,28 +67,28 @@ static int n800_blizzard_prepare(struct n800_blizzard *display)
 
    pr_info("n800-display: hardware initialization begin\n");
 
-   ret = omap2_rfbi_init(&display->clocks);
+   ret = omap2_rfbi_init();
    if (ret)
       return ret;
    pr_info("n800-display: RFBI initialized\n");
 
-   ret = n800_blizzard_power_up();
+   ret = n800_display_power_up();
    if (ret)
       return ret;
    pr_info("n800-display: display power enabled\n");
 
-   ret = omap2_rfbi_set_timings(display->clocks.osc_hz, &display->clocks, NULL);
+   ret = omap2_rfbi_set_timings(omap2_rfbi_get_osc_rate(), NULL);
    if (ret)
       return ret;
 
-   ret = n800_blizzard_probe(&display->bus, display->clocks.osc_hz,
+   ret = n800_blizzard_probe(&display->bus, omap2_rfbi_get_osc_rate(),
                              &display->controller);
    if (ret)
       return ret;
    pr_info("n800-display: Blizzard controller detected, revision 0x%02x\n",
            display->controller.revision);
 
-   ret = omap2_rfbi_set_timings(display->controller.sys_hz, &display->clocks,
+   ret = omap2_rfbi_set_timings(display->controller.sys_hz,
                                 &display->write_cycle_ps);
    if (ret)
       return ret;

@@ -6,19 +6,12 @@
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <poller.h>
+#include <mach/omap/omap2-clock.h>
 
 #include "omap2-dispc.h"
 #include "omap2-rfbi.h"
 
 #define OMAP2420_RFBI_BASE         0x48050800U
-#define OMAP2420_PRCM_BASE         0x48008000U
-#define OMAP2420_CM_FCLKEN1_CORE   0x48008200U
-#define OMAP2420_CM_ICLKEN1_CORE   0x48008210U
-#define OMAP2420_CM_CLKSEL1_CORE   0x48008240U
-#define OMAP2420_CM_CLKSEL1_PLL    0x48008540U
-#define OMAP2420_CM_CLKSEL2_PLL    0x48008544U
-
-#define PRCM_CLKSRC_CTRL            0x0060U
 
 #define RFBI_SYSCONFIG              0x0010U
 #define RFBI_SYSSTATUS              0x0014U
@@ -41,6 +34,13 @@
 #define RFBI_PARALLEL_MODE_MASK     0x3U
 #define RFBI_PARALLEL_MODE_16       0x3U
 #define RFBI_RESET_TIMEOUT          100U
+
+struct omap2_rfbi_clocks {
+   unsigned long osc_hz;
+   unsigned long l4_hz;
+};
+
+static struct omap2_rfbi_clocks rfbi_clocks;
 
 struct rfbi_timings {
    int cs_on_time;
@@ -152,69 +152,42 @@ static int calc_reg_timing(unsigned long sys_hz, unsigned long l4_khz, int div,
 
 static int read_clocks(struct omap2_rfbi_clocks *clocks)
 {
-   u32 clksrc = readl(IOMEM(OMAP2420_PRCM_BASE + PRCM_CLKSRC_CTRL));
-   u32 pll1 = readl(IOMEM(OMAP2420_CM_CLKSEL1_PLL));
-   u32 pll2 = readl(IOMEM(OMAP2420_CM_CLKSEL2_PLL));
-   u32 core = readl(IOMEM(OMAP2420_CM_CLKSEL1_CORE));
-   unsigned long crystal;
-   unsigned long dpll;
-   u32 crystal_sel = (pll1 >> 23) & 0x7U;
-   u32 sys_div = (clksrc >> 6) & 0x3U;
-   u32 mult = (pll1 >> 12) & 0x3ffU;
-   u32 div = (pll1 >> 8) & 0x0fU;
-   u32 amult = pll2 & 0x3U;
-   u32 l3_div = core & 0x1fU;
-   u32 l4_div = (core >> 5) & 0x3U;
+   clocks->osc_hz = omap2_get_osc_clock_rate();
+   clocks->l4_hz = omap2_get_l4_clock_rate();
 
-   switch (crystal_sel) {
-   case 0:
-      crystal = 19200000UL;
-      break;
-   case 2:
-      crystal = 13000000UL;
-      break;
-   case 3:
-      crystal = 12000000UL;
-      break;
-   default:
-      return -EINVAL;
-   }
-
-   if (!sys_div || !amult || !l3_div || !l4_div)
+   if (!clocks->osc_hz || !clocks->l4_hz)
       return -EINVAL;
 
-   clocks->osc_hz = crystal * sys_div;
-   dpll = crystal * mult / (div + 1U);
-   dpll *= amult;
-   clocks->l4_hz = dpll / l3_div / l4_div;
    return 0;
 }
 
-int omap2_rfbi_init(struct omap2_rfbi_clocks *clocks)
+static void configure_routing(void)
+{
+   u32 value;
+
+   /* Preserve the proven RX-34 RFBI routing sequence before resetting RFBI. */
+   value = rfbi_readl(RFBI_CONTROL);
+   value &= ~(1U << 1);
+   rfbi_writel(value, RFBI_CONTROL);
+}
+
+static int reset_controller(void)
 {
    unsigned int timeout;
-   u32 value;
-   int ret;
-
-   ret = read_clocks(clocks);
-   if (ret)
-      return ret;
-
-   value = readl(IOMEM(OMAP2420_CM_ICLKEN1_CORE));
-   writel(value | 1U, IOMEM(OMAP2420_CM_ICLKEN1_CORE));
-   value = readl(IOMEM(OMAP2420_CM_FCLKEN1_CORE));
-   writel(value | 1U, IOMEM(OMAP2420_CM_FCLKEN1_CORE));
-
-   omap2_dispc_prepare_external_transfer();
 
    rfbi_writel(1U << 1, RFBI_SYSCONFIG);
    for (timeout = 0; timeout < RFBI_RESET_TIMEOUT; timeout++) {
       if (rfbi_readl(RFBI_SYSSTATUS) & 1U)
-         break;
+         return 0;
       mdelay(1);
    }
-   if (timeout == RFBI_RESET_TIMEOUT)
-      return -ETIMEDOUT;
+
+   return -ETIMEDOUT;
+}
+
+static void configure_controller(void)
+{
+   u32 value;
 
    value = rfbi_readl(RFBI_SYSCONFIG);
    value |= (1U << 0) | (2U << 3);
@@ -227,16 +200,39 @@ int omap2_rfbi_init(struct omap2_rfbi_clocks *clocks)
    rfbi_writel(0, RFBI_DATA_CYCLE2_0);
    rfbi_writel(0, RFBI_DATA_CYCLE3_0);
    rfbi_writel(RFBI_CONTROL_CS0, RFBI_CONTROL);
+}
+
+int omap2_rfbi_init(void)
+{
+   int ret;
+
+   ret = read_clocks(&rfbi_clocks);
+   if (ret)
+      return ret;
+
+   omap2_enable_dss_clocks();
+
+   ret = reset_controller();
+   if (ret)
+      return ret;
+
+   configure_controller();
+   omap2_dispc_prepare_external_transfer();
+   configure_routing();
 
    return 0;
 }
 
+unsigned long omap2_rfbi_get_osc_rate(void)
+{
+   return rfbi_clocks.osc_hz;
+}
+
 int omap2_rfbi_set_timings(unsigned long device_sys_hz,
-                           const struct omap2_rfbi_clocks *clocks,
                            unsigned long *write_cycle_ps)
 {
    struct rfbi_timings timings;
-   unsigned long l4_khz = clocks->l4_hz / 1000UL;
+   unsigned long l4_khz = rfbi_clocks.l4_hz / 1000UL;
    u32 value;
    int div;
    int ret = -ERANGE;
@@ -304,13 +300,7 @@ int omap2_rfbi_setup_tearsync(unsigned int pin_count, unsigned int hs_pulse_ps,
       return -EINVAL;
 
    /* Direct port of RX-34 rfbi_setup_tearsync(). */
-   {
-      struct omap2_rfbi_clocks clocks;
-
-      if (read_clocks(&clocks))
-         return -EINVAL;
-      l4_khz = clocks.l4_hz / 1000UL;
-   }
+   l4_khz = rfbi_clocks.l4_hz / 1000UL;
    tick_ps = 1000000000UL / l4_khz;
    hs = (hs_pulse_ps + tick_ps - 1U) / tick_ps;
    vs = (vs_pulse_ps + tick_ps - 1U) / tick_ps;
@@ -342,11 +332,7 @@ int omap2_rfbi_setup_tearsync(unsigned int pin_count, unsigned int hs_pulse_ps,
 
 unsigned long omap2_rfbi_get_max_tx_rate(void)
 {
-   struct omap2_rfbi_clocks clocks;
-
-   if (read_clocks(&clocks))
-      return 0;
-   return clocks.l4_hz;
+   return rfbi_clocks.l4_hz;
 }
 
 int omap2_rfbi_enable_tearsync(bool enable, unsigned int line)

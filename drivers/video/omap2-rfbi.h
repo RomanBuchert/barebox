@@ -4,14 +4,9 @@
 #include <dma.h>
 #include <linux/types.h>
 
-struct omap2_rfbi_clocks {
-   unsigned long osc_hz;
-   unsigned long l4_hz;
-};
-
-int omap2_rfbi_init(struct omap2_rfbi_clocks *clocks);
+int omap2_rfbi_init(void);
+unsigned long omap2_rfbi_get_osc_rate(void);
 int omap2_rfbi_set_timings(unsigned long device_sys_hz,
-                           const struct omap2_rfbi_clocks *clocks,
                            unsigned long *write_cycle_ps);
 void omap2_rfbi_set_bits_per_cycle(unsigned int bits);
 u8 omap2_rfbi_read_reg8(u8 reg);

@@ -4,7 +4,6 @@
 #include <dma.h>
 #include <linux/types.h>
 
-void omap2_dispc_prepare_rfbi_mode(void);
 void omap2_dispc_prepare_external_transfer(void);
 void omap2_dispc_setup_plane(dma_addr_t framebuffer, unsigned int screen_width,
                              unsigned int x, unsigned int y,

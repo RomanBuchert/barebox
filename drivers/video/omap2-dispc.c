@@ -15,7 +15,6 @@
 #include "omap2-dispc.h"
 
 #define OMAP2420_DISPC_BASE       0x48050400U
-#define OMAP2420_RFBI_BASE        0x48050800U
 
 #define DISPC_IRQSTATUS            0x0018U
 #define DISPC_CONTROL              0x0040U
@@ -29,8 +28,6 @@
 #define DISPC_GFX_FIFO_THRESHOLD   0x00a4U
 #define DISPC_GFX_FIFO_SIZE_STATUS 0x00a8U
 #define DISPC_GFX_ROW_INC          0x00acU
-
-#define RFBI_CONTROL               0x0040U
 
 #define DISPC_IRQ_FRAMEDONE        0x0001U
 #define DISPC_RGB_16_BPP           0x06U
@@ -55,7 +52,7 @@ static void dispc_modify_reg(u32 reg, u32 mask, u32 value)
    dispc_write_reg(reg, current);
 }
 
-void omap2_dispc_prepare_rfbi_mode(void)
+static void omap2_dispc_prepare_rfbi_mode(void)
 {
    u32 value;
 
@@ -67,10 +64,6 @@ void omap2_dispc_prepare_rfbi_mode(void)
    value &= ~((1U << 11) | (1U << 15) | (1U << 16));
    value |= (1U << 11) | (1U << 15);
    dispc_write_reg(DISPC_CONTROL, value);
-
-   value = readl(IOMEM(OMAP2420_RFBI_BASE + RFBI_CONTROL));
-   value &= ~(1U << 1);
-   writel(value, IOMEM(OMAP2420_RFBI_BASE + RFBI_CONTROL));
 }
 
 void omap2_dispc_prepare_external_transfer(void)
