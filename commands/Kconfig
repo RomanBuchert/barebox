@@ -2760,6 +2760,7 @@ config CMD_N8X0S_BOOTMENU
 	bool "N8x0s graphical boot menu"
 	depends on MACH_NOKIA_N800
 	select IMAGE_RENDERER
+	select INPUT
 	select PNG
 	help
 	  Build the graphical N8x0s boot menu for the Nokia N800.

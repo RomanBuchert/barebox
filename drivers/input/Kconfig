@@ -34,6 +34,14 @@ config KEYBOARD_N800_TSC2301
 	  The initial bring-up driver polls the TSC2301 keypad data register
 	  through OMAP2 McSPI1 and reports standard Barebox input events.
 
+
+config KEYBOARD_N800_TSC2301_DEBUG
+	bool "Debug Nokia N800 TSC2301 keypad events"
+	depends on KEYBOARD_N800_TSC2301
+	help
+	  Print raw KPDATA changes and decoded key events to the active
+	  Barebox console. This is intended only for keypad bring-up.
+
 config KEYBOARD_GPIO
 	bool "GPIO Buttons"
 	depends on GPIOLIB

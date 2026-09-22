@@ -6,6 +6,7 @@
 #include <fb.h>
 #include <gui/graphic_utils.h>
 #include <gui/image_renderer.h>
+#include <readkey.h>
 
 #define N8X0S_FBDEV "/dev/fb0"
 #define N8X0S_ASSET_DIR "/env/n8x0s/bootmenu"
@@ -14,6 +15,7 @@
 #define N8X0S_ITEM_COUNT 4
 
 struct n8x0s_bootmenu_item {
+   const char *name;
    const char *icon_file;
    const char *label_file;
    int tile_x;
@@ -28,10 +30,10 @@ struct n8x0s_bootmenu_images {
 };
 
 static const struct n8x0s_bootmenu_item n8x0s_items[N8X0S_ITEM_COUNT] = {
-   { "sdcard-1.png", "label-sd1.png", CONFIG_N8X0S_BOOTMENU_SD1_X },
-   { "sdcard-2.png", "label-sd2.png", CONFIG_N8X0S_BOOTMENU_SD2_X },
-   { "internal.png", "label-internal.png", CONFIG_N8X0S_BOOTMENU_INTERNAL_X },
-   { "power.png", "label-power.png", CONFIG_N8X0S_BOOTMENU_POWER_X },
+   { "SD1", "sdcard-1.png", "label-sd1.png", CONFIG_N8X0S_BOOTMENU_SD1_X },
+   { "SD2", "sdcard-2.png", "label-sd2.png", CONFIG_N8X0S_BOOTMENU_SD2_X },
+   { "Internal", "internal.png", "label-internal.png", CONFIG_N8X0S_BOOTMENU_INTERNAL_X },
+   { "Power", "power.png", "label-power.png", CONFIG_N8X0S_BOOTMENU_POWER_X },
 };
 
 static struct image *n8x0s_open_asset(const char *name)
@@ -132,30 +134,121 @@ static int n8x0s_draw_item(struct screen *sc, struct n8x0s_bootmenu_images *imag
    return n8x0s_render_image(sc, images->labels[item], label_x, label_y);
 }
 
-static int n8x0s_draw_menu(struct screen *sc, struct n8x0s_bootmenu_images *images)
+static void n8x0s_blit_item(struct screen *sc, struct n8x0s_bootmenu_images *images,
+                            unsigned int item)
+{
+   gu_screen_blit_area(sc, n8x0s_items[item].tile_x, CONFIG_N8X0S_BOOTMENU_TILE_Y,
+                       images->tile->width, images->tile->height);
+}
+
+static int n8x0s_compose_menu(struct screen *sc, struct n8x0s_bootmenu_images *images,
+                              unsigned int selected)
 {
    unsigned int i;
    int ret;
 
+   /*
+    * Rebuild the complete shadow framebuffer from the background for every
+    * selection state. The tile PNGs contain alpha, so drawing an unselected
+    * tile directly over a previously selected tile would blend with stale
+    * pixels and make the result depend on the previous state.
+    */
    ret = n8x0s_render_image(sc, images->background, 0, 0);
    if (ret < 0)
       return ret;
 
    for (i = 0; i < N8X0S_ITEM_COUNT; i++) {
-      ret = n8x0s_draw_item(sc, images, i, i == CONFIG_N8X0S_BOOTMENU_INITIAL_SELECTION);
+      ret = n8x0s_draw_item(sc, images, i, i == selected);
       if (ret < 0)
          return ret;
    }
 
-   /* One deliberate full-screen transfer for the initial static menu. */
+   return 0;
+}
+
+static int n8x0s_draw_menu(struct screen *sc, struct n8x0s_bootmenu_images *images,
+                           unsigned int selected)
+{
+   int ret;
+
+   ret = n8x0s_compose_menu(sc, images, selected);
+   if (ret < 0)
+      return ret;
+
    gu_screen_blit_area(sc, 0, 0, N8X0S_WIDTH, N8X0S_HEIGHT);
 
    return 0;
 }
 
+static int n8x0s_change_selection(struct screen *sc, struct n8x0s_bootmenu_images *images,
+                                  unsigned int *selected, int direction)
+{
+   unsigned int old = *selected;
+   int ret;
+
+   if (direction < 0)
+      *selected = *selected ? *selected - 1 : N8X0S_ITEM_COUNT - 1;
+   else
+      *selected = (*selected + 1) % N8X0S_ITEM_COUNT;
+
+   ret = n8x0s_compose_menu(sc, images, *selected);
+   if (ret < 0)
+      return ret;
+
+   /*
+    * The shadow framebuffer is fully reconstructed, but only the two tiles
+    * whose visual state changed are transferred to the physical framebuffer.
+    */
+   n8x0s_blit_item(sc, images, old);
+   n8x0s_blit_item(sc, images, *selected);
+
+   printf("N8x0s bootmenu: selected %s\n", n8x0s_items[*selected].name);
+
+   return 0;
+}
+
+static int n8x0s_run_menu(struct screen *sc, struct n8x0s_bootmenu_images *images,
+                          unsigned int *selected)
+{
+   int key;
+   int ret;
+
+   printf("N8x0s bootmenu: console navigation active; Esc or Ctrl-C exits\n");
+
+   while (1) {
+      key = read_key();
+
+      switch (key) {
+      case BB_KEY_LEFT:
+      case BB_KEY_UP:
+         ret = n8x0s_change_selection(sc, images, selected, -1);
+         if (ret < 0)
+            return ret;
+         break;
+      case BB_KEY_RIGHT:
+      case BB_KEY_DOWN:
+         ret = n8x0s_change_selection(sc, images, selected, 1);
+         if (ret < 0)
+            return ret;
+         break;
+      case BB_KEY_ENTER:
+      case BB_KEY_RETURN:
+         printf("N8x0s bootmenu: activate %s (action not implemented)\n",
+                n8x0s_items[*selected].name);
+         break;
+      case '\e':
+      case 3:
+         return 0;
+      default:
+         break;
+      }
+   }
+}
+
 static int do_n8x0s_bootmenu(int argc, char *argv[])
 {
    struct n8x0s_bootmenu_images images;
+   unsigned int selected = CONFIG_N8X0S_BOOTMENU_INITIAL_SELECTION;
    struct screen *sc;
    int ret;
 
@@ -178,14 +271,20 @@ static int do_n8x0s_bootmenu(int argc, char *argv[])
       goto close_fb;
    }
 
-   ret = n8x0s_draw_menu(sc, &images);
+   ret = n8x0s_draw_menu(sc, &images, selected);
    if (ret < 0) {
       printf("N8x0s: unable to render boot menu: %pe\n", ERR_PTR(ret));
       ret = COMMAND_ERROR;
-   } else {
-      ret = 0;
+      goto close_images;
    }
 
+   ret = n8x0s_run_menu(sc, &images, &selected);
+   if (ret < 0) {
+      printf("N8x0s: boot menu input failed: %pe\n", ERR_PTR(ret));
+      ret = COMMAND_ERROR;
+   }
+
+close_images:
    n8x0s_close_images(&images);
 close_fb:
    fb_close(sc);
@@ -194,8 +293,9 @@ close_fb:
 }
 
 BAREBOX_CMD_HELP_START(n8x0s_bootmenu)
-BAREBOX_CMD_HELP_TEXT("Display the static N8x0s boot menu test screen.")
-BAREBOX_CMD_HELP_TEXT("This version intentionally has no input handling or boot actions.")
+BAREBOX_CMD_HELP_TEXT("Display the interactive N8x0s boot menu.")
+BAREBOX_CMD_HELP_TEXT("Console arrow keys change selection. Enter reports the selected item.")
+BAREBOX_CMD_HELP_TEXT("Esc or Ctrl-C exits. Boot actions are not implemented yet.")
 BAREBOX_CMD_HELP_END
 
 BAREBOX_CMD_START(n8x0s_bootmenu)

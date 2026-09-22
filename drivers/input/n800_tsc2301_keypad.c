@@ -229,6 +229,11 @@ static void n800_tsc2301_report(struct n800_tsc2301_keypad *keypad, u16 state)
    u16 changed;
    unsigned int bit;
 
+#ifdef CONFIG_KEYBOARD_N800_TSC2301_DEBUG
+   if ((state & ~TSC2301_KEYPAD_MASK_UNUSED) != keypad->previous)
+      printf("N800 keypad: KPDATA=0x%04x previous=0x%04x\n", state, keypad->previous);
+#endif
+
    state &= ~TSC2301_KEYPAD_MASK_UNUSED;
    changed = state ^ keypad->previous;
 
@@ -239,6 +244,10 @@ static void n800_tsc2301_report(struct n800_tsc2301_keypad *keypad, u16 state)
       if (!(changed & BIT(bit)) || !n800_keycodes[bit])
          continue;
 
+#ifdef CONFIG_KEYBOARD_N800_TSC2301_DEBUG
+      printf("N800 keypad: key=%u value=%u bit=%u\n", n800_keycodes[bit],
+             !!(state & BIT(bit)), bit);
+#endif
       input_report_key_event(&keypad->input, n800_keycodes[bit],
                              !!(state & BIT(bit)));
    }
