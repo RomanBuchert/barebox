@@ -245,8 +245,45 @@ static ssize_t fb_cdev_write(struct cdev *cdev, const void *buf, size_t count,
 	ssize_t ret;
 
 	ret = mem_write(cdev, buf, count, offset, flags);
-	if (ret > 0 && info->screen_base_shadow)
-		memcpy(info->screen_base_shadow + offset, buf, ret);
+	if (ret > 0) {
+		struct fb_rect rect;
+		size_t bpp = info->bits_per_pixel >> 3;
+		size_t first = (size_t)offset;
+		size_t last = first + (size_t)ret - 1;
+		u32 first_y;
+		u32 last_y;
+
+		if (info->screen_base_shadow)
+			memcpy(info->screen_base_shadow + offset, buf, ret);
+
+		/*
+		 * A framebuffer cdev write changes the backing store directly.
+		 * Notify drivers with damage tracking just like the GUI helpers do.
+		 * For writes crossing a scanline, use the full affected scanline
+		 * range because fb_rect cannot describe a wrapped byte interval.
+		 */
+		if (bpp && info->line_length) {
+			first_y = first / info->line_length;
+			last_y = last / info->line_length;
+
+			if (first_y == last_y) {
+				rect.x1 = (first % info->line_length) / bpp;
+				rect.x2 = (last % info->line_length) / bpp + 1;
+			} else {
+				rect.x1 = 0;
+				rect.x2 = info->xres;
+			}
+
+			rect.y1 = first_y;
+			rect.y2 = last_y + 1;
+
+			if (rect.y1 < info->yres) {
+				rect.x2 = min_t(u32, rect.x2, info->xres);
+				rect.y2 = min_t(u32, rect.y2, info->yres);
+				fb_damage(info, &rect);
+			}
+		}
+	}
 
 	return ret;
 }
