@@ -2755,3 +2755,52 @@ endmenu
 endmenu
 
 endif
+
+config CMD_N8X0S_BOOTMENU
+	bool "N8x0s graphical boot menu"
+	depends on MACH_NOKIA_N800
+	select IMAGE_RENDERER
+	select PNG
+	help
+	  Build the graphical N8x0s boot menu for the Nokia N800.
+
+if CMD_N8X0S_BOOTMENU
+
+config N8X0S_BOOTMENU_SD1_X
+	int "SD card 1 tile X position"
+	default 22
+
+config N8X0S_BOOTMENU_SD2_X
+	int "SD card 2 tile X position"
+	default 214
+
+config N8X0S_BOOTMENU_INTERNAL_X
+	int "Internal storage tile X position"
+	default 406
+
+config N8X0S_BOOTMENU_POWER_X
+	int "Power tile X position"
+	default 598
+
+config N8X0S_BOOTMENU_TILE_WIDTH
+	int "Tile layout width"
+	default 178
+
+config N8X0S_BOOTMENU_TILE_Y
+	int "Tile Y position"
+	default 115
+
+config N8X0S_BOOTMENU_ICON_Y_OFFSET
+	int "Icon center Y offset from tile"
+	default 100
+
+config N8X0S_BOOTMENU_LABEL_Y_OFFSET
+	int "Label center Y offset from tile"
+	default 210
+
+config N8X0S_BOOTMENU_INITIAL_SELECTION
+	int "Initially selected item (0..3)"
+	range 0 3
+	default 0
+
+endif

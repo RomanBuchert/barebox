@@ -175,3 +175,5 @@ obj-$(CONFIG_CMD_VERITYSETUP)	+= veritysetup.o
 obj-$(CONFIG_CMD_SCONFIG)	+= sconfig.o
 obj-$(CONFIG_CMD_RKSECURE)	+= rksecure.o
 UBSAN_SANITIZE_ubsan.o := y
+
+obj-$(CONFIG_CMD_N8X0S_BOOTMENU) += n8x0s-bootmenu.o
