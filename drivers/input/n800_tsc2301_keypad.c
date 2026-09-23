@@ -6,16 +6,8 @@
 #include <init.h>
 #include <input/input.h>
 #include <mach/omap/omap2-mcspi.h>
+#include <input/tsc2301.h>
 #include <poller.h>
-
-#define TSC2301_READ                      BIT(15)
-#define TSC2301_PAGE_DATA                 0
-#define TSC2301_PAGE_CONTROL              1
-#define TSC2301_REG_KPDATA                0x04
-#define TSC2301_REG_KEY                   0x01
-#define TSC2301_REG_CONFIG2               0x06
-#define TSC2301_REG_KPMASK                0x10
-#define TSC2301_COMMAND(read, page, reg)  ((read) | ((page) << 11) | ((reg) << 5))
 
 #define TSC2301_KEY_STOP                  0x4000
 #define TSC2301_KEY_DEBOUNCE_20MS         0x1000
@@ -29,6 +21,7 @@
 struct n800_tsc2301_keypad {
    struct input_device input;
    struct poller_async poller;
+   struct tsc2301 tsc;
    u16 previous;
 };
 
@@ -53,36 +46,22 @@ static const struct omap2_mcspi_device n800_tsc2301_spi = {
    .max_speed_hz = 6000000,
 };
 
-static int n800_tsc2301_transfer(struct n800_tsc2301_keypad *keypad, u16 command,
-                                 u16 tx, u16 *rx)
+static int n800_tsc2301_transfer(void *context, u16 command, u16 tx, u16 *rx)
 {
    u32 tx_words[2] = { command, tx };
    u32 rx_words[2];
    int ret;
+
+   (void)context;
 
    ret = omap2_mcspi1_transfer(&n800_tsc2301_spi, tx_words, rx_words,
                                ARRAY_SIZE(tx_words));
    if (ret)
       return ret;
 
-   *rx = rx_words[1] & 0xffff;
+   *rx = rx_words[1] & 0xffffU;
 
    return 0;
-}
-
-static int n800_tsc2301_read_reg(struct n800_tsc2301_keypad *keypad, u8 page, u8 reg,
-                                 u16 *value)
-{
-   return n800_tsc2301_transfer(keypad, TSC2301_COMMAND(TSC2301_READ, page, reg),
-                                0, value);
-}
-
-static int n800_tsc2301_write_reg(struct n800_tsc2301_keypad *keypad, u8 page, u8 reg,
-                                  u16 value)
-{
-   u16 dummy;
-
-   return n800_tsc2301_transfer(keypad, TSC2301_COMMAND(0, page, reg), value, &dummy);
 }
 
 static int n800_tsc2301_keypad_init(struct n800_tsc2301_keypad *keypad, u16 *state)
@@ -90,35 +69,36 @@ static int n800_tsc2301_keypad_init(struct n800_tsc2301_keypad *keypad, u16 *sta
    u16 config2;
    int ret;
 
-   ret = n800_tsc2301_write_reg(keypad, TSC2301_PAGE_CONTROL, TSC2301_REG_KEY,
-                                TSC2301_KEY_STOP);
+   /* Stop scanning while the keypad controller is configured. */
+   ret = tsc2301_write_reg(&keypad->tsc, TSC2301_PAGE_CONTROL, TSC2301_REG_KEY,
+                           TSC2301_KEY_STOP);
    if (ret)
       return ret;
 
-   ret = n800_tsc2301_read_reg(keypad, TSC2301_PAGE_CONTROL, TSC2301_REG_CONFIG2,
-                               &config2);
+   ret = tsc2301_read_reg(&keypad->tsc, TSC2301_PAGE_CONTROL, TSC2301_REG_CONFIG2,
+                          &config2);
    if (ret)
       return ret;
 
    config2 &= ~TSC2301_CONFIG2_KBC_MASK;
    config2 |= TSC2301_CONFIG2_KBC_MODE2;
 
-   ret = n800_tsc2301_write_reg(keypad, TSC2301_PAGE_CONTROL, TSC2301_REG_CONFIG2,
-                                config2);
+   ret = tsc2301_write_reg(&keypad->tsc, TSC2301_PAGE_CONTROL, TSC2301_REG_CONFIG2,
+                           config2);
    if (ret)
       return ret;
 
-   ret = n800_tsc2301_write_reg(keypad, TSC2301_PAGE_CONTROL, TSC2301_REG_KPMASK,
-                                TSC2301_KEYPAD_MASK_UNUSED);
+   ret = tsc2301_write_reg(&keypad->tsc, TSC2301_PAGE_CONTROL, TSC2301_REG_KPMASK,
+                           TSC2301_KEYPAD_MASK_UNUSED);
    if (ret)
       return ret;
 
-   ret = n800_tsc2301_write_reg(keypad, TSC2301_PAGE_CONTROL, TSC2301_REG_KEY,
-                                TSC2301_KEY_DEBOUNCE_20MS);
+   ret = tsc2301_write_reg(&keypad->tsc, TSC2301_PAGE_CONTROL, TSC2301_REG_KEY,
+                           TSC2301_KEY_DEBOUNCE_20MS);
    if (ret)
       return ret;
 
-   return n800_tsc2301_read_reg(keypad, TSC2301_PAGE_DATA, TSC2301_REG_KPDATA, state);
+   return tsc2301_read_reg(&keypad->tsc, TSC2301_PAGE_DATA, TSC2301_REG_KPDATA, state);
 }
 
 static void n800_tsc2301_report(struct n800_tsc2301_keypad *keypad, u16 state)
@@ -157,7 +137,7 @@ static void n800_tsc2301_poll(void *ctx)
    struct n800_tsc2301_keypad *keypad = ctx;
    u16 state;
 
-   if (!n800_tsc2301_read_reg(keypad, TSC2301_PAGE_DATA, TSC2301_REG_KPDATA, &state))
+   if (!tsc2301_read_reg(&keypad->tsc, TSC2301_PAGE_DATA, TSC2301_REG_KPDATA, &state))
       n800_tsc2301_report(keypad, state);
 
    poller_call_async(&keypad->poller, N800_TSC2301_POLL_INTERVAL_NS,
@@ -172,6 +152,8 @@ static int n800_tsc2301_keypad_probe(struct device *dev)
 
    keypad = xzalloc(sizeof(*keypad));
    keypad->input.parent = dev;
+   keypad->tsc.context = keypad;
+   keypad->tsc.transfer = n800_tsc2301_transfer;
 
    ret = omap2_mcspi1_setup();
    if (ret) {

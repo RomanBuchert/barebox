@@ -179,3 +179,4 @@ UBSAN_SANITIZE_ubsan.o := y
 obj-$(CONFIG_CMD_N8X0S_BOOTMENU) += n8x0s-bootmenu.o
 
 obj-$(CONFIG_CMD_N8X0S_MIPID_TEST) += n8x0s-mipid-test.o
+obj-$(CONFIG_KEYBOARD_N800_TSC2301) += n8x0s-tsc2301-test.o

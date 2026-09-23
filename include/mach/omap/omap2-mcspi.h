@@ -50,3 +50,13 @@ int omap2_mcspi1_transfer_words(const struct omap2_mcspi_device *device,
 int omap2_mcspi1_transfer_words_trace(const struct omap2_mcspi_device *device,
                                       const struct omap2_mcspi_word *tx, u32 *rx,
                                       size_t words, struct omap2_mcspi_trace *trace);
+
+struct omap2_mcspi_channel_state {
+   u32 modulctrl;
+   u32 chconf;
+   u32 chstat;
+   u32 chctrl;
+};
+
+int omap2_mcspi1_get_channel_state(unsigned int channel,
+                                   struct omap2_mcspi_channel_state *state);

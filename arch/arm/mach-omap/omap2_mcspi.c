@@ -308,3 +308,17 @@ int omap2_mcspi1_transfer_words_trace(const struct omap2_mcspi_device *device,
 {
    return omap2_mcspi1_transfer_words_internal(device, tx, rx, words, trace);
 }
+
+int omap2_mcspi1_get_channel_state(unsigned int channel,
+                                   struct omap2_mcspi_channel_state *state)
+{
+   if (!state || channel > 3)
+      return -EINVAL;
+
+   state->modulctrl = readl(mcspi1 + MCSPI_MODULCTRL);
+   state->chconf = readl(omap2_mcspi_channel_reg(channel, MCSPI_CHCONF0));
+   state->chstat = readl(omap2_mcspi_channel_reg(channel, MCSPI_CHSTAT0));
+   state->chctrl = readl(omap2_mcspi_channel_reg(channel, MCSPI_CHCTRL0));
+
+   return 0;
+}
