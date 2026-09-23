@@ -239,3 +239,118 @@ void n800_blizzard_set_window(struct n800_blizzard_bus *bus,
    for (i = 0; i < sizeof(data); i++)
       bus->write_data8(bus->context, data[i]);
 }
+
+/*
+ * RX-34 runtime state captured on real N800 hardware. NOLO performs the cold
+ * initialization; this table is only used to restore that known-good state
+ * after the controller has entered its documented standby/sleep mode.
+ *
+ * 0x58/0x5a are deliberately absent: they are the indirect TV-filter
+ * index/data pair and accessing 0x5a advances the index.
+ */
+struct n800_blizzard_restore_register {
+   u8 reg;
+   u8 value;
+};
+
+static const struct n800_blizzard_restore_register n800_blizzard_pll_state[] = {
+   { 0x04U, 0x92U }, { 0x06U, 0x00U }, { 0x08U, 0x42U },
+   { 0x0aU, 0x00U }, { 0x0eU, 0x11U },
+};
+
+static const struct n800_blizzard_restore_register n800_blizzard_runtime_state[] = {
+   { 0x18U, 0xf3U }, { 0x1aU, 0x01U }, { 0x1cU, 0x35U },
+   { 0x1eU, 0x12U }, { 0x20U, 0x21U },
+   { 0x28U, 0x44U }, { 0x2aU, 0x64U }, { 0x2cU, 0x1eU },
+   { 0x2eU, 0xe0U }, { 0x30U, 0x01U }, { 0x32U, 0x06U },
+   { 0x34U, 0x14U }, { 0x36U, 0x02U }, { 0x38U, 0x02U },
+   { 0x3aU, 0x02U }, { 0x3cU, 0x00U }, { 0x3eU, 0x00U },
+   { 0x40U, 0x00U }, { 0x42U, 0x01U }, { 0x44U, 0x00U },
+   { 0x46U, 0x00U }, { 0x48U, 0x00U }, { 0x4aU, 0x00U },
+   { 0x4cU, 0x00U }, { 0x4eU, 0x10U }, { 0x50U, 0x14U },
+   { 0x52U, 0x03U }, { 0x54U, 0x00U }, { 0x56U, 0x80U },
+};
+
+static void n800_blizzard_restore(struct n800_blizzard_bus *bus,
+                                  const struct n800_blizzard_restore_register *state,
+                                  size_t count)
+{
+   size_t i;
+
+   for (i = 0; i < count; i++)
+      blizzard_write_reg(bus, state[i].reg, state[i].value);
+}
+
+static int n800_blizzard_wait_set(struct n800_blizzard_bus *bus, u8 reg, u8 mask,
+                                  unsigned int timeout_ms)
+{
+   uint64_t start = get_time_ns();
+
+   while (!(blizzard_read_reg(bus, reg) & mask)) {
+      poller_call();
+      if (is_timeout(start, (uint64_t)timeout_ms * MSECOND))
+         return -ETIMEDOUT;
+      mdelay(1);
+   }
+
+   return 0;
+}
+
+int n800_blizzard_suspend(struct n800_blizzard_bus *bus)
+{
+   u8 value;
+   int ret;
+
+   /* Nokia RX-34 suspend ordering: stop SDRAM, then request standby/sleep. */
+   blizzard_write_reg(bus, 0x10U, 0x00U);
+
+   value = blizzard_read_reg(bus, 0xe6U);
+   blizzard_write_reg(bus, 0xe6U, value | 0x03U);
+
+   ret = n800_blizzard_wait_set(bus, 0x0cU, BIT(1), 100U);
+   if (!ret)
+      return 0;
+
+   /* Same fallback as the original Nokia driver when sleep does not settle. */
+   value = blizzard_read_reg(bus, 0x0cU);
+   value &= ~0x03U;
+   value |= 0x02U;
+   blizzard_write_reg(bus, 0x0cU, value);
+
+   return 0;
+}
+
+int n800_blizzard_resume(struct n800_blizzard_bus *bus)
+{
+   u8 value;
+   int ret;
+
+   value = blizzard_read_reg(bus, 0xe6U);
+   blizzard_write_reg(bus, 0xe6U, value & ~0x03U);
+
+   n800_blizzard_restore(bus, n800_blizzard_pll_state,
+                         ARRAY_SIZE(n800_blizzard_pll_state));
+
+   value = blizzard_read_reg(bus, 0x0cU);
+   value &= ~0x03U;
+   value |= 0x01U;
+   blizzard_write_reg(bus, 0x0cU, value);
+
+   ret = n800_blizzard_wait_set(bus, 0x04U, BIT(7), 200U);
+   if (ret)
+      return ret;
+
+   blizzard_write_reg(bus, 0x10U, 0x00U);
+   udelay(50);
+   blizzard_write_reg(bus, 0x10U, 0x01U);
+
+   ret = n800_blizzard_wait_set(bus, 0x14U, BIT(0), 200U);
+   if (ret)
+      return ret;
+
+   n800_blizzard_restore(bus, n800_blizzard_runtime_state,
+                         ARRAY_SIZE(n800_blizzard_runtime_state));
+   blizzard_write_reg(bus, 0x68U, 0x01U);
+
+   return 0;
+}

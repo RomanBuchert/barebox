@@ -36,3 +36,10 @@ void n800_blizzard_disable_tearsync(struct n800_blizzard_bus *bus);
 void n800_blizzard_set_window(struct n800_blizzard_bus *bus,
                               const struct n800_blizzard_info *info,
                               u16 x, u16 y, u16 width, u16 height);
+
+/*
+ * RX-34 runtime power management. Initial S1D13745 cold initialization remains
+ * a NOLO responsibility; these functions only suspend/resume a valid state.
+ */
+int n800_blizzard_suspend(struct n800_blizzard_bus *bus);
+int n800_blizzard_resume(struct n800_blizzard_bus *bus);
