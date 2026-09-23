@@ -8,4 +8,4 @@ obj-$(CONFIG_KEYBOARD_IMX_KEYPAD) += imx_keypad.o
 obj-$(CONFIG_KEYBOARD_QT1070) += qt1070.o
 obj-$(CONFIG_INPUT_SPECIALKEYS) += specialkeys.o
 obj-$(CONFIG_VIRTIO_INPUT) += virtio_input.o
-obj-$(CONFIG_KEYBOARD_N800_TSC2301) += tsc2301-core.o n800-tsc2301.o
+obj-$(CONFIG_KEYBOARD_N800_TSC2301) += tsc2301-core.o n800-tsc2301.o n800-tsc2301-keypad.o
