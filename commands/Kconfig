@@ -2805,3 +2805,10 @@ config N8X0S_BOOTMENU_INITIAL_SELECTION
 	default 0
 
 endif
+
+config CMD_N8X0S_MIPID_TEST
+	bool "N800 MIPID CS1 read-only test"
+	depends on MACH_NOKIA_N800
+	help
+	  Enable the manual n8x0s_mipid_test command. It performs a read-only
+	  SPI transaction on McSPI1 CS1 and prints raw 9-bit samples.

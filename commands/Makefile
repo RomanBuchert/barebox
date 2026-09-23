@@ -177,3 +177,5 @@ obj-$(CONFIG_CMD_RKSECURE)	+= rksecure.o
 UBSAN_SANITIZE_ubsan.o := y
 
 obj-$(CONFIG_CMD_N8X0S_BOOTMENU) += n8x0s-bootmenu.o
+
+obj-$(CONFIG_CMD_N8X0S_MIPID_TEST) += n8x0s-mipid-test.o

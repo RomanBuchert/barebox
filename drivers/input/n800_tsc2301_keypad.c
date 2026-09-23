@@ -5,53 +5,8 @@
 #include <errno.h>
 #include <init.h>
 #include <input/input.h>
-#include <io.h>
+#include <mach/omap/omap2-mcspi.h>
 #include <poller.h>
-
-#define N800_MCSPI1_BASE                  0x48098000
-
-#define OMAP2420_CM_FCLKEN1_CORE          0x48008200
-#define OMAP2420_CM_ICLKEN1_CORE          0x48008210
-#define OMAP2420_MCSPI1_CLOCK_BIT         BIT(17)
-
-#define OMAP2420_CONTROL_PADCONF_MUX_BASE 0x48000030
-#define OMAP2420_PADCONF_SPI1_CLK         (OMAP2420_CONTROL_PADCONF_MUX_BASE + 0x0cf)
-#define OMAP2420_PADCONF_SPI1_SIMO        (OMAP2420_CONTROL_PADCONF_MUX_BASE + 0x0d0)
-#define OMAP2420_PADCONF_SPI1_SOMI        (OMAP2420_CONTROL_PADCONF_MUX_BASE + 0x0d1)
-#define OMAP2420_PADCONF_SPI1_NCS0        (OMAP2420_CONTROL_PADCONF_MUX_BASE + 0x0d2)
-#define OMAP2420_MUX_MODE0                0x00
-
-#define MCSPI_SYSCONFIG                   0x10
-#define MCSPI_SYSSTATUS                   0x14
-#define MCSPI_MODULCTRL                   0x28
-#define MCSPI_CHCONF0                     0x2c
-#define MCSPI_CHSTAT0                     0x30
-#define MCSPI_CHCTRL0                     0x34
-#define MCSPI_TX0                         0x38
-#define MCSPI_RX0                         0x3c
-
-#define MCSPI_SYSCONFIG_SOFTRESET         BIT(1)
-#define MCSPI_SYSSTATUS_RESETDONE         BIT(0)
-#define MCSPI_MODULCTRL_SINGLE            BIT(0)
-#define MCSPI_MODULCTRL_MS                BIT(2)
-#define MCSPI_MODULCTRL_STEST             BIT(3)
-
-#define MCSPI_CHCONF_PHA                  BIT(0)
-#define MCSPI_CHCONF_POL                  BIT(1)
-#define MCSPI_CHCONF_CLKD_SHIFT           2
-#define MCSPI_CHCONF_CLKD_MASK            (0xf << MCSPI_CHCONF_CLKD_SHIFT)
-#define MCSPI_CHCONF_EPOL                 BIT(6)
-#define MCSPI_CHCONF_WL_SHIFT             7
-#define MCSPI_CHCONF_WL_MASK              (0x1f << MCSPI_CHCONF_WL_SHIFT)
-#define MCSPI_CHCONF_TRM_MASK             (0x3 << 12)
-#define MCSPI_CHCONF_DPE0                 BIT(16)
-#define MCSPI_CHCONF_DPE1                 BIT(17)
-#define MCSPI_CHCONF_IS                   BIT(18)
-#define MCSPI_CHCONF_FORCE                BIT(20)
-
-#define MCSPI_CHSTAT_RXS                  BIT(0)
-#define MCSPI_CHSTAT_TXS                  BIT(1)
-#define MCSPI_CHCTRL_EN                   BIT(0)
 
 #define TSC2301_READ                      BIT(15)
 #define TSC2301_PAGE_DATA                 0
@@ -70,11 +25,8 @@
 #define TSC2301_KEYPAD_MASK_UNUSED        0x8889
 
 #define N800_TSC2301_POLL_INTERVAL_NS     (20ULL * 1000ULL * 1000ULL)
-#define N800_MCSPI_WAIT_ITERATIONS        4096
-#define N800_MCSPI_RESET_ITERATIONS       4096
 
 struct n800_tsc2301_keypad {
-   void __iomem *regs;
    struct input_device input;
    struct poller_async poller;
    u16 previous;
@@ -94,83 +46,28 @@ static const unsigned int n800_keycodes[16] = {
    [14] = KEY_ZOOMIN,
 };
 
-static void n800_mmio_write8(unsigned long address, u8 value)
-{
-   *(volatile u8 *)address = value;
-}
-
-static void n800_mcspi_hw_enable(void)
-{
-   u32 value;
-
-   value = readl(IOMEM(OMAP2420_CM_ICLKEN1_CORE));
-   writel(value | OMAP2420_MCSPI1_CLOCK_BIT, IOMEM(OMAP2420_CM_ICLKEN1_CORE));
-
-   value = readl(IOMEM(OMAP2420_CM_FCLKEN1_CORE));
-   writel(value | OMAP2420_MCSPI1_CLOCK_BIT, IOMEM(OMAP2420_CM_FCLKEN1_CORE));
-
-   /*
-    * OMAP2420 padconf registers are 8-bit wide. SPI1 is the mode-0
-    * function on these four pads.
-    */
-   n800_mmio_write8(OMAP2420_PADCONF_SPI1_CLK, OMAP2420_MUX_MODE0);
-   n800_mmio_write8(OMAP2420_PADCONF_SPI1_SIMO, OMAP2420_MUX_MODE0);
-   n800_mmio_write8(OMAP2420_PADCONF_SPI1_SOMI, OMAP2420_MUX_MODE0);
-   n800_mmio_write8(OMAP2420_PADCONF_SPI1_NCS0, OMAP2420_MUX_MODE0);
-}
-
-static int n800_mcspi_wait(struct n800_tsc2301_keypad *keypad, u32 mask)
-{
-   unsigned int count;
-
-   for (count = 0; count < N800_MCSPI_WAIT_ITERATIONS; count++) {
-      if (readl(keypad->regs + MCSPI_CHSTAT0) & mask)
-         return 0;
-   }
-
-   return -ETIMEDOUT;
-}
-
-static int n800_mcspi_word(struct n800_tsc2301_keypad *keypad, u16 tx, u16 *rx)
-{
-   int ret;
-
-   ret = n800_mcspi_wait(keypad, MCSPI_CHSTAT_TXS);
-   if (ret)
-      return ret;
-
-   writel(tx, keypad->regs + MCSPI_TX0);
-
-   ret = n800_mcspi_wait(keypad, MCSPI_CHSTAT_RXS);
-   if (ret)
-      return ret;
-
-   *rx = readl(keypad->regs + MCSPI_RX0) & 0xffff;
-
-   return 0;
-}
+static const struct omap2_mcspi_device n800_tsc2301_spi = {
+   .chip_select = 0,
+   .mode = OMAP2_MCSPI_MODE_0,
+   .bits_per_word = 16,
+   .max_speed_hz = 6000000,
+};
 
 static int n800_tsc2301_transfer(struct n800_tsc2301_keypad *keypad, u16 command,
                                  u16 tx, u16 *rx)
 {
-   u16 dummy;
-   u32 conf;
+   u32 tx_words[2] = { command, tx };
+   u32 rx_words[2];
    int ret;
 
-   conf = readl(keypad->regs + MCSPI_CHCONF0);
-   conf |= MCSPI_CHCONF_FORCE;
-   writel(conf, keypad->regs + MCSPI_CHCONF0);
-   writel(MCSPI_CHCTRL_EN, keypad->regs + MCSPI_CHCTRL0);
+   ret = omap2_mcspi1_transfer(&n800_tsc2301_spi, tx_words, rx_words,
+                               ARRAY_SIZE(tx_words));
+   if (ret)
+      return ret;
 
-   ret = n800_mcspi_word(keypad, command, &dummy);
-   if (!ret)
-      ret = n800_mcspi_word(keypad, tx, rx);
+   *rx = rx_words[1] & 0xffff;
 
-   conf &= ~MCSPI_CHCONF_FORCE;
-   writel(conf, keypad->regs + MCSPI_CHCONF0);
-   writel(0, keypad->regs + MCSPI_CHCTRL0);
-
-   return ret;
+   return 0;
 }
 
 static int n800_tsc2301_read_reg(struct n800_tsc2301_keypad *keypad, u8 page, u8 reg,
@@ -267,40 +164,6 @@ static void n800_tsc2301_poll(void *ctx)
                      n800_tsc2301_poll, keypad);
 }
 
-static int n800_mcspi_init(struct n800_tsc2301_keypad *keypad)
-{
-   unsigned int count;
-   u32 conf;
-
-   n800_mcspi_hw_enable();
-
-   writel(MCSPI_SYSCONFIG_SOFTRESET, keypad->regs + MCSPI_SYSCONFIG);
-
-   for (count = 0; count < N800_MCSPI_RESET_ITERATIONS; count++) {
-      if (readl(keypad->regs + MCSPI_SYSSTATUS) & MCSPI_SYSSTATUS_RESETDONE)
-         break;
-   }
-
-   if (count == N800_MCSPI_RESET_ITERATIONS)
-      return -ETIMEDOUT;
-
-   conf = readl(keypad->regs + MCSPI_MODULCTRL);
-   conf &= ~(MCSPI_MODULCTRL_STEST | MCSPI_MODULCTRL_MS);
-   conf |= MCSPI_MODULCTRL_SINGLE;
-   writel(conf, keypad->regs + MCSPI_MODULCTRL);
-
-   conf = readl(keypad->regs + MCSPI_CHCONF0);
-   conf &= ~(MCSPI_CHCONF_PHA | MCSPI_CHCONF_POL | MCSPI_CHCONF_CLKD_MASK |
-            MCSPI_CHCONF_WL_MASK | MCSPI_CHCONF_TRM_MASK | MCSPI_CHCONF_DPE1 |
-            MCSPI_CHCONF_IS | MCSPI_CHCONF_FORCE);
-   conf |= MCSPI_CHCONF_EPOL | MCSPI_CHCONF_DPE0;
-   conf |= 3 << MCSPI_CHCONF_CLKD_SHIFT;
-   conf |= (16 - 1) << MCSPI_CHCONF_WL_SHIFT;
-   writel(conf, keypad->regs + MCSPI_CHCONF0);
-
-   return 0;
-}
-
 static int n800_tsc2301_keypad_probe(struct device *dev)
 {
    struct n800_tsc2301_keypad *keypad;
@@ -308,12 +171,11 @@ static int n800_tsc2301_keypad_probe(struct device *dev)
    int ret;
 
    keypad = xzalloc(sizeof(*keypad));
-   keypad->regs = IOMEM(N800_MCSPI1_BASE);
    keypad->input.parent = dev;
 
-   ret = n800_mcspi_init(keypad);
+   ret = omap2_mcspi1_setup();
    if (ret) {
-      dev_err(dev, "McSPI reset timed out\n");
+      dev_err(dev, "failed to set up McSPI1: %pe\n", ERR_PTR(ret));
       return ret;
    }
 
